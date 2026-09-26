@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>External Trackpad</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * {
+      touch-action: none;
+      user-select: none;
+      box-sizing: border-box;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      background-color: #121212;
+      overflow: hidden;
+    }
+    #pad {
+      width: 100vw;
+      height: 100vh;
+      background: #181818;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #888;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 1.2rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="pad">Trackpad Active</div>
+
+  <script>
+    const socket = io();
+    const pad = document.getElementById('pad');
+
+    let lastX = 0, lastY = 0;
+    let isTap = false;
+    let touchStartTime = 0;
+
+    let startMultiX = 0, startMultiY = 0;
+    let gestureActive = false;
+
+    pad.addEventListener('touchstart', (e) => {
+      const touchCount = e.touches.length;
+
+      if (touchCount === 1) {
+        const touch = e.touches[0];
+        lastX = touch.clientX;
+        lastY = touch.clientY;
+        isTap = true;
+        touchStartTime = Date.now();
+      } else {
+        isTap = false;
+        gestureActive = false;
+
+        let totalX = 0, totalY = 0;
+        for (let i = 0; i < touchCount; i++) {
+          totalX += e.touches[i].clientX;
+          totalY += e.touches[i].clientY;
+        }
+        startMultiX = totalX / touchCount;
+        startMultiY = totalY / touchCount;
+        lastY = e.touches[0].clientY;
+      }
+    });
+
+    pad.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const touchCount = e.touches.length;
+
+      if (touchCount === 1) {
+        // --- 1 FINGER: MOUSE POINTER ---
+        const touch = e.touches[0];
+        const dx = touch.clientX - lastX;
+        const dy = touch.clientY - lastY;
+
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+          isTap = false;
+        }
+
+        socket.emit('move', { dx, dy });
+        lastX = touch.clientX;
+        lastY = touch.clientY;
+
+      } else if (touchCount === 2) {
+        // --- 2 FINGERS: SCROLL OR PAGE NAV ---
+        let currentX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        let currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        const totalDx = currentX - startMultiX;
+        const totalDy = currentY - startMultiY;
+
+        if (!gestureActive && Math.abs(totalDx) > 45 && Math.abs(totalDx) > Math.abs(totalDy) * 1.5) {
+          gestureActive = true;
+          if (totalDx > 0) {
+            socket.emit('nav-page', 'back');     // Swipe Right = Back
+          } else {
+            socket.emit('nav-page', 'forward');  // Swipe Left = Forward
+          }
+        } else if (!gestureActive && Math.abs(totalDy) > 4) {
+          const dy = e.touches[0].clientY - lastY;
+          socket.emit('scroll', { dy: dy * -1 });
+          lastY = e.touches[0].clientY;
+        }
+
+      } else if (touchCount >= 3) {
+        // --- 3 FINGERS: DESKTOP SPACES & MISSION CONTROL ---
+        let currentX = 0, currentY = 0;
+        for (let i = 0; i < touchCount; i++) {
+          currentX += e.touches[i].clientX;
+          currentY += e.touches[i].clientY;
+        }
+        currentX /= touchCount;
+        currentY /= touchCount;
+
+        const totalDx = currentX - startMultiX;
+        const totalDy = currentY - startMultiY;
+
+        if (!gestureActive) {
+          // Horizontal Swipes (Switch Desktops)
+          if (Math.abs(totalDx) > 35 && Math.abs(totalDx) > Math.abs(totalDy) * 1.2) {
+            gestureActive = true;
+            if (totalDx > 0) {
+              socket.emit('switch-window', 'left');  // Swipe Right = Move Left Space
+            } else {
+              socket.emit('switch-window', 'right'); // Swipe Left = Move Right Space
+            }
+          } 
+          // Vertical Swipes (Mission Control)
+          else if (Math.abs(totalDy) > 35 && Math.abs(totalDy) > Math.abs(totalDx) * 1.2) {
+            gestureActive = true;
+            if (totalDy < 0) {
+              socket.emit('switch-window', 'up');    // Swipe Up = Open Mission Control
+            } else {
+              socket.emit('switch-window', 'down');  // Swipe Down = App Expose / Down
+            }
+          }
+        }
+      }
+    }, { passive: false });
+
+    pad.addEventListener('touchend', (e) => {
+      if (e.touches.length === 0) {
+        const duration = Date.now() - touchStartTime;
+        if (isTap && duration < 200) {
+          socket.emit('click');
+        }
+        gestureActive = false;
+      }
+    });
+  </script>
+</body>
+</html>
