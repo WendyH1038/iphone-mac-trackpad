@@ -19,6 +19,24 @@
       background-color: #121212;
       overflow: hidden;
     }
+    #status {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 16px;
+      border-radius: 20px;
+      background: #2a2a2a;
+      color: #888;
+      font-size: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      z-index: 10;
+      transition: all 0.3s ease;
+    }
+    #status.connected {
+      background: #1b4332;
+      color: #52b788;
+    }
     #pad {
       width: 100vw;
       height: 100vh;
@@ -26,29 +44,76 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #888;
+      color: #666;
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
       font-size: 1.2rem;
+      position: relative;
+    }
+    .touch-ripple {
+      position: absolute;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.35);
+      transform: translate(-50%, -50%) scale(1);
+      pointer-events: none;
+      animation: ripple-fade 0.3s ease-out forwards;
+    }
+    @keyframes ripple-fade {
+      to {
+        transform: translate(-50%, -50%) scale(2);
+        opacity: 0;
+      }
     }
   </style>
 </head>
 <body>
 
+  <div id="status">Connecting...</div>
   <div id="pad">Trackpad Active</div>
 
   <script>
     const socket = io();
     const pad = document.getElementById('pad');
+    const statusEl = document.getElementById('status');
 
     let lastX = 0, lastY = 0;
     let isTap = false;
     let touchStartTime = 0;
+    let lastScrollY = 0;
 
-    let startMultiX = 0, startMultiY = 0;
-    let gestureActive = false;
+    // Connection status updates
+    socket.on('connect', () => {
+      statusEl.textContent = 'Connected to Mac';
+      statusEl.classList.add('connected');
+    });
+
+    socket.on('disconnect', () => {
+      statusEl.textContent = 'Disconnected';
+      statusEl.classList.remove('connected');
+    });
+
+    function triggerHaptic() {
+      if ('vibrate' in navigator) navigator.vibrate(12);
+    }
+
+    function createRipple(x, y) {
+      const ripple = document.createElement('div');
+      ripple.className = 'touch-ripple';
+      ripple.style.left = `${x}px`;
+      ripple.style.top = `${y}px`;
+      pad.appendChild(ripple);
+      setTimeout(() => ripple.remove(), 300);
+    }
 
     pad.addEventListener('touchstart', (e) => {
+      e.preventDefault(); 
       const touchCount = e.touches.length;
+
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        createRipple(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
+      }
+      triggerHaptic();
 
       if (touchCount === 1) {
         const touch = e.touches[0];
@@ -56,27 +121,18 @@
         lastY = touch.clientY;
         isTap = true;
         touchStartTime = Date.now();
-      } else {
+      } else if (touchCount === 2) {
         isTap = false;
-        gestureActive = false;
-
-        let totalX = 0, totalY = 0;
-        for (let i = 0; i < touchCount; i++) {
-          totalX += e.touches[i].clientX;
-          totalY += e.touches[i].clientY;
-        }
-        startMultiX = totalX / touchCount;
-        startMultiY = totalY / touchCount;
-        lastY = e.touches[0].clientY;
+        lastScrollY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       }
-    });
+    }, { passive: false });
 
     pad.addEventListener('touchmove', (e) => {
       e.preventDefault();
       const touchCount = e.touches.length;
 
       if (touchCount === 1) {
-        // --- 1 FINGER: MOUSE POINTER ---
+        // 1 FINGER: MOUSE MOVE
         const touch = e.touches[0];
         const dx = touch.clientX - lastX;
         const dy = touch.clientY - lastY;
@@ -90,57 +146,13 @@
         lastY = touch.clientY;
 
       } else if (touchCount === 2) {
-        // --- 2 FINGERS: SCROLL OR PAGE NAV ---
-        let currentX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-        let currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        const totalDx = currentX - startMultiX;
-        const totalDy = currentY - startMultiY;
+        // 2 FINGERS: VERTICAL SCROLL ONLY
+        const currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        const dy = currentY - lastScrollY;
 
-        if (!gestureActive && Math.abs(totalDx) > 45 && Math.abs(totalDx) > Math.abs(totalDy) * 1.5) {
-          gestureActive = true;
-          if (totalDx > 0) {
-            socket.emit('nav-page', 'back');     // Swipe Right = Back
-          } else {
-            socket.emit('nav-page', 'forward');  // Swipe Left = Forward
-          }
-        } else if (!gestureActive && Math.abs(totalDy) > 4) {
-          const dy = e.touches[0].clientY - lastY;
+        if (Math.abs(dy) > 2) {
           socket.emit('scroll', { dy: dy * -1 });
-          lastY = e.touches[0].clientY;
-        }
-
-      } else if (touchCount >= 3) {
-        // --- 3 FINGERS: DESKTOP SPACES & MISSION CONTROL ---
-        let currentX = 0, currentY = 0;
-        for (let i = 0; i < touchCount; i++) {
-          currentX += e.touches[i].clientX;
-          currentY += e.touches[i].clientY;
-        }
-        currentX /= touchCount;
-        currentY /= touchCount;
-
-        const totalDx = currentX - startMultiX;
-        const totalDy = currentY - startMultiY;
-
-        if (!gestureActive) {
-          // Horizontal Swipes (Switch Desktops)
-          if (Math.abs(totalDx) > 35 && Math.abs(totalDx) > Math.abs(totalDy) * 1.2) {
-            gestureActive = true;
-            if (totalDx > 0) {
-              socket.emit('switch-window', 'left');  // Swipe Right = Move Left Space
-            } else {
-              socket.emit('switch-window', 'right'); // Swipe Left = Move Right Space
-            }
-          } 
-          // Vertical Swipes (Mission Control)
-          else if (Math.abs(totalDy) > 35 && Math.abs(totalDy) > Math.abs(totalDx) * 1.2) {
-            gestureActive = true;
-            if (totalDy < 0) {
-              socket.emit('switch-window', 'up');    // Swipe Up = Open Mission Control
-            } else {
-              socket.emit('switch-window', 'down');  // Swipe Down = App Expose / Down
-            }
-          }
+          lastScrollY = currentY;
         }
       }
     }, { passive: false });
@@ -151,8 +163,12 @@
         if (isTap && duration < 200) {
           socket.emit('click');
         }
-        gestureActive = false;
+        isTap = false;
       }
+    });
+
+    pad.addEventListener('touchcancel', () => {
+      isTap = false;
     });
   </script>
 </body>

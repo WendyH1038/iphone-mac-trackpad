@@ -17,9 +17,9 @@ const MOVE_SENSITIVITY = 1.5;
 const SCROLL_SPEED = 2.0;
 
 io.on('connection', (socket) => {
-  console.log('📱 Phone connected!');
+  console.log('Phone connected!');
 
-  // 1-Finger: Move Mouse Cursor
+  // 1-Finger: Move Mouse 
   socket.on('move', (data) => {
     mouse.getPosition().then((currentPos) => {
       const newX = currentPos.x + Math.round(data.dx * MOVE_SENSITIVITY);
@@ -43,7 +43,7 @@ io.on('connection', (socket) => {
     await mouse.leftClick();
   });
 
-  // 2-Finger Horizontal Swipe: Chrome/Browser Back & Forward
+  // 2-Finger Horizontal Swipe
   socket.on('nav-page', async (dir) => {
     try {
       if (dir === 'back') {
@@ -74,7 +74,6 @@ io.on('connection', (socket) => {
         await keyboard.pressKey(Key.LeftControl, Key.Up);
         await keyboard.releaseKey(Key.Up, Key.LeftControl);
       } else if (dir === 'down') {
-        // App Windows / Exit Mission Control (Ctrl + Down)
         await keyboard.pressKey(Key.LeftControl, Key.Down);
         await keyboard.releaseKey(Key.Down, Key.LeftControl);
       }
